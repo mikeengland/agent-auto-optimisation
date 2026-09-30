@@ -1,0 +1,179 @@
+name: Optimise agent from feedback
+
+# Feedback issue (labelled agent-feedback) -> Claude Code writes evals + fixes the agent
+# -> independent guard checks -> pull request for a human to review.
+
+on:
+  issues:
+    types: [opened]
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: Feedback issue number to (re)process
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  id-token: write
+
+concurrency:
+  group: optimise-${{ github.event.issue.number || inputs.issue }}
+  cancel-in-progress: true
+
+jobs:
+  optimise:
+    # Only feedback issues filed by the app's backend (which uses the repo owner's token) start a run.
+    # On a public repo this stops strangers from spending your credits or steering the coding agent.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (contains(github.event.issue.labels.*.name, 'agent-feedback') &&
+       github.event.issue.user.login == github.repository_owner)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      ISSUE: ${{ github.event.issue.number || inputs.issue }}
+      BRANCH: feedback/issue-${{ github.event.issue.number || inputs.issue }}
+      # The app agent's API key. Deliberately NOT named ANTHROPIC_API_KEY, so Claude Code keeps using the
+      # subscription token below instead of billing the API. app/config.py reads this name.
+      AGENT_ANTHROPIC_API_KEY: ${{ secrets.AGENT_ANTHROPIC_API_KEY }}
+      # A PAT (optional) lets the PR trigger the Evals workflow; PRs opened with GITHUB_TOKEN don't.
+      GH_TOKEN: ${{ secrets.GH_PAT || github.token }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GH_PAT || github.token }}
+
+      - uses: astral-sh/setup-uv@v6
+
+      - run: uv sync --locked
+
+      - name: Fetch the feedback issue
+        run: |
+          mkdir -p .optimise
+          gh issue view "$ISSUE" --json number,title,body,url \
+            --jq '"# Issue #\(.number): \(.title)\n\(.url)\n\n\(.body)"' > .optimise/feedback.md
+          gh issue comment "$ISSUE" --body "🤖 Optimisation run started: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+      - name: Claude Code writes evals and optimises the agent
+        uses: anthropics/claude-code-action@v1
+        continue-on-error: true  # the steps below report whatever state it left behind
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ github.token }}
+          prompt: |
+            Follow the instructions in .github/prompts/optimise.md.
+            The feedback to act on is GitHub issue #${{ env.ISSUE }}, saved in .optimise/feedback.md.
+          claude_args: |
+            --max-turns 100
+            --allowedTools "Read,Edit,Write,Glob,Grep,Bash(uv run:*),Bash(git diff:*),Bash(git status:*),Bash(git log:*),Bash(git show:*)"
+
+      - name: Read Claude's outcome
+        id: outcome
+        run: |
+          status=$(jq -r '.status // "missing"' .optimise/outcome.json 2>/dev/null || echo missing)
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          echo "Claude reported: $status"
+          cat .optimise/outcome.json 2>/dev/null || true
+
+      # ---- Guards: independent re-checks that don't trust the coding agent's own report ----
+
+      - name: "Guard 1: existing evals and grading code untouched"
+        id: integrity
+        if: steps.outcome.outputs.status == 'fixed' || steps.outcome.outputs.status == 'not_fixed'
+        continue-on-error: true
+        run: |
+          uv run python scripts/check_eval_integrity.py --base origin/main --require-new --issue "$ISSUE" \
+            | tee .optimise/integrity.txt
+          echo "new_cases=$(tail -n1 .optimise/integrity.txt)" >> "$GITHUB_OUTPUT"
+
+      - name: "Guard 2: expectations match the data (unit tests)"
+        id: unit
+        if: steps.integrity.outcome == 'success'
+        continue-on-error: true
+        run: uv run pytest -q
+
+      - name: "Guard 3: new evals fail on main (they capture the reported problem)"
+        id: red
+        if: steps.integrity.outcome == 'success'
+        continue-on-error: true
+        run: scripts/verify_new_cases_fail_on_base.sh origin/main "${{ steps.integrity.outputs.new_cases }}"
+
+      - name: "Guard 4: full eval suite passes on this branch"
+        id: green
+        if: steps.integrity.outcome == 'success'
+        continue-on-error: true
+        run: uv run python -m evals.run --markdown .optimise/branch_results.md
+
+      - name: Open or update the pull request
+        if: steps.outcome.outputs.status == 'fixed' || steps.outcome.outputs.status == 'not_fixed'
+        run: |
+          icon() { case "$1" in success) echo "✅";; skipped|"") echo "⏭️";; *) echo "❌";; esac; }
+          all_green=true
+          for s in "${{ steps.integrity.outcome }}" "${{ steps.unit.outcome }}" "${{ steps.red.outcome }}" "${{ steps.green.outcome }}"; do
+            [ "$s" = "success" ] || all_green=false
+          done
+          [ "${{ steps.outcome.outputs.status }}" = "fixed" ] || all_green=false
+
+          {
+            cat .optimise/pr_body.md 2>/dev/null || echo "_Claude did not write a PR description._"
+            echo
+            echo "---"
+            echo "## Independent checks (run by the workflow, not the coding agent)"
+            echo
+            echo "| Check | Result |"
+            echo "|---|---|"
+            echo "| Existing eval cases and grading code unchanged | $(icon '${{ steps.integrity.outcome }}') |"
+            echo "| Expected values match the data (\`reference_sql\`) | $(icon '${{ steps.unit.outcome }}') |"
+            echo "| New eval case(s) fail on \`main\` | $(icon '${{ steps.red.outcome }}') |"
+            echo "| Full eval suite passes on this branch | $(icon '${{ steps.green.outcome }}') |"
+            echo
+            if [ -f .optimise/base_results.md ]; then
+              echo "<details><summary>New case(s) on <code>main</code> (before)</summary>"; echo
+              cat .optimise/base_results.md; echo; echo "</details>"; echo
+            fi
+            if [ -f .optimise/branch_results.md ]; then
+              echo "<details open><summary>Full suite on this branch (after)</summary>"; echo
+              cat .optimise/branch_results.md; echo; echo "</details>"; echo
+            fi
+            [ -f .optimise/integrity.txt ] && { echo '```'; cat .optimise/integrity.txt; echo '```'; }
+            echo
+            echo "_Generated from feedback issue #$ISSUE by [this workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})._"
+          } > .optimise/pr_full_body.md
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$BRANCH"
+          git add -A
+          if git diff --cached --quiet; then
+            gh issue comment "$ISSUE" --body "🤖 The optimisation run finished without changing any files. See the workflow run for details."
+            exit 0
+          fi
+          title=$(jq -r '.title // "Fix agent behaviour from feedback"' .optimise/outcome.json)
+          git commit -m "$title" -m "Automated fix for feedback issue #$ISSUE."
+          git push --force origin "$BRANCH"
+
+          draft_flag=""
+          $all_green || draft_flag="--draft"
+          if gh pr view "$BRANCH" --json number >/dev/null 2>&1; then
+            gh pr edit "$BRANCH" --title "$title" --body-file .optimise/pr_full_body.md
+            pr_url=$(gh pr view "$BRANCH" --json url --jq .url)
+          else
+            pr_url=$(gh pr create --base main --head "$BRANCH" --title "$title" --body-file .optimise/pr_full_body.md $draft_flag)
+          fi
+          if $all_green; then
+            gh issue comment "$ISSUE" --body "🤖 All checks passed. Proposed fix ready for review: $pr_url"
+          else
+            gh issue comment "$ISSUE" --body "🤖 Opened a **draft** PR, because not every check passed: $pr_url"
+          fi
+
+      - name: Report when there is nothing to fix
+        if: steps.outcome.outputs.status != 'fixed' && steps.outcome.outputs.status != 'not_fixed'
+        run: |
+          summary=$(jq -r '.summary // "Claude did not report an outcome; see the workflow logs."' .optimise/outcome.json 2>/dev/null \
+            || echo "Claude did not report an outcome; see the workflow logs.")
+          gh issue comment "$ISSUE" --body "🤖 No PR opened (outcome: \`${{ steps.outcome.outputs.status }}\`).
+
+          $summary"
