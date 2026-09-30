@@ -66,6 +66,7 @@ jobs:
           prompt: |
             Follow the instructions in .github/prompts/optimise.md.
             The feedback to act on is GitHub issue #${{ env.ISSUE }}, saved in .optimise/feedback.md.
+          show_full_output: true  # TEMP: debugging the eval connection error; remove once diagnosed (logs are public)
           claude_args: |
             --max-turns 100
             --allowedTools "Read,Edit,Write,Glob,Grep,Bash(uv run:*),Bash(git diff:*),Bash(git status:*),Bash(git log:*),Bash(git show:*)"
