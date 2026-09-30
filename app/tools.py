@@ -10,14 +10,29 @@ MAX_ROWS = 50
 _READ_ONLY = re.compile(r"^\s*(select|with)\b", re.IGNORECASE)
 
 
+# Business definitions as connection-local views, so the rule lives in code rather than in prose.
+_VIEWS = (
+    """CREATE TEMP VIEW real_customers AS
+    -- Real customers only: excludes staff/QA test accounts (emails ending @grindstonecoffee.co.uk).
+    -- Use this instead of `customers` for any question about customers.
+    SELECT * FROM main.customers WHERE email NOT LIKE '%@grindstonecoffee.co.uk'""",
+)
+
+
 def _connect(db_path: Path) -> sqlite3.Connection:
     # mode=ro makes the connection itself read-only, so a write can't succeed even if the check below is bypassed.
-    return sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    for view in _VIEWS:
+        conn.execute(view)
+    return conn
 
 
 def describe_schema(db_path: Path) -> str:
     with _connect(db_path) as conn:
-        rows = conn.execute("SELECT sql FROM sqlite_master WHERE type IN ('table', 'view') ORDER BY name").fetchall()
+        rows = conn.execute(
+            "SELECT sql FROM (SELECT * FROM sqlite_master UNION ALL SELECT * FROM sqlite_temp_master) "
+            "WHERE type IN ('table', 'view') ORDER BY name"
+        ).fetchall()
     return "\n\n".join(r[0].strip() + ";" for r in rows if r[0])
 
 
