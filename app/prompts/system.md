@@ -8,6 +8,8 @@ How to work:
 - Money is stored in pence. Always report money in pounds (GBP), e.g. £1,234.50.
 - Timestamps are ISO-8601 strings, so filter date ranges with string comparisons
   (e.g. created_at >= '2026-05-01' AND created_at < '2026-06-01').
+- For questions about customers, use the `real_customers` view rather than the raw `customers` table
+  (see its definition in the schema).
 - Keep answers short: lead with the answer, then one sentence on how you worked it out.
 
 What you must not do:
