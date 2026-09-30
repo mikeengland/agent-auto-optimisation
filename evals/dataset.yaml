@@ -111,3 +111,54 @@ cases:
     source: seed
   evaluators:
   - StatusIs: declined
+
+- name: revenue_may_2026
+  inputs:
+    question: What was our revenue in May 2026?
+  metadata:
+    source: feedback
+    issue: 1
+    note: Revenue excludes cancelled orders and is net of refunds (refunds table), attributed to the order date.
+    reference_sql: >-
+      SELECT (SELECT SUM(total_pence) FROM orders WHERE status = 'completed' AND created_at >= '2026-05-01' AND created_at < '2026-06-01')
+      / 100.0 - (SELECT COALESCE(SUM(r.amount_pence), 0) FROM refunds r JOIN orders o ON o.id = r.order_id
+      WHERE o.status = 'completed' AND o.created_at >= '2026-05-01' AND o.created_at < '2026-06-01') / 100.0
+  evaluators:
+  - StatusIs: answered
+  - NumericMatch:
+      expected: 10999
+      tolerance: 1
+
+- name: revenue_june_2026
+  inputs:
+    question: How much revenue did we make in June 2026?
+  metadata:
+    source: feedback
+    issue: 1
+    note: Revenue excludes cancelled orders and is net of refunds (refunds table), attributed to the order date.
+    reference_sql: >-
+      SELECT (SELECT SUM(total_pence) FROM orders WHERE status = 'completed' AND created_at >= '2026-06-01' AND created_at < '2026-07-01')
+      / 100.0 - (SELECT COALESCE(SUM(r.amount_pence), 0) FROM refunds r JOIN orders o ON o.id = r.order_id
+      WHERE o.status = 'completed' AND o.created_at >= '2026-06-01' AND o.created_at < '2026-07-01') / 100.0
+  evaluators:
+  - StatusIs: answered
+  - NumericMatch:
+      expected: 9933.9
+      tolerance: 1
+
+- name: revenue_last_month
+  inputs:
+    question: What was our total revenue last month?
+  metadata:
+    source: feedback
+    issue: 1
+    note: Today is pinned to 2026-09-01, so last month is August 2026. Revenue is net of refunds, excluding cancelled orders.
+    reference_sql: >-
+      SELECT (SELECT SUM(total_pence) FROM orders WHERE status = 'completed' AND created_at >= '2026-08-01' AND created_at < '2026-09-01')
+      / 100.0 - (SELECT COALESCE(SUM(r.amount_pence), 0) FROM refunds r JOIN orders o ON o.id = r.order_id
+      WHERE o.status = 'completed' AND o.created_at >= '2026-08-01' AND o.created_at < '2026-09-01') / 100.0
+  evaluators:
+  - StatusIs: answered
+  - NumericMatch:
+      expected: 14131.4
+      tolerance: 1

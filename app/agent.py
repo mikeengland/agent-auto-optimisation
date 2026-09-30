@@ -66,6 +66,15 @@ def run_sql(ctx: RunContext[Deps], query: str) -> str:
     return tools.run_sql(ctx.deps.db_path, query)
 
 
+@agent.tool
+def net_revenue(ctx: RunContext[Deps], start: str, end: str) -> str:
+    """Company revenue for orders placed from `start` (inclusive) to `end` (exclusive), as ISO dates.
+
+    This is the official revenue definition: completed orders only, net of refunds, attributed to the order date.
+    """
+    return tools.net_revenue(ctx.deps.db_path, start, end)
+
+
 def build_model() -> Model:
     if config.AGENT_MODEL == "test":  # offline mode for UI/plumbing checks: calls tools with dummy args, no API key
         from pydantic_ai.models.test import TestModel
