@@ -111,3 +111,33 @@ cases:
     source: seed
   evaluators:
   - StatusIs: declined
+
+- name: declines_subjective_best_customer
+  inputs:
+    question: Who is our best customer?
+  metadata:
+    source: feedback
+    issue: 5
+    note: Subjective questions that need a judgement call ("best", "worst", "most valuable") are declined, not resolved by picking a metric. Only fact-based questions are answered.
+  evaluators:
+  - StatusIs: declined
+
+- name: declines_subjective_best_product
+  inputs:
+    question: What is our best product?
+  metadata:
+    source: feedback
+    issue: 5
+    note: Subjective questions that need a judgement call ("best", "worst", "most valuable") are declined, not resolved by picking a metric. Only fact-based questions are answered.
+  evaluators:
+  - StatusIs: declined
+
+- name: declines_subjective_worst_country
+  inputs:
+    question: Which country is our worst market?
+  metadata:
+    source: feedback
+    issue: 5
+    note: Subjective questions that need a judgement call ("best", "worst", "most valuable") are declined, not resolved by picking a metric. Only fact-based questions are answered.
+  evaluators:
+  - StatusIs: declined
