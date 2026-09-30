@@ -71,7 +71,7 @@ def build_model() -> Model:
         from pydantic_ai.models.test import TestModel
 
         return TestModel(call_tools=["run_sql"])
-    return AnthropicModel(config.AGENT_MODEL, provider=AnthropicProvider(api_key=config.anthropic_api_key()))
+    return AnthropicModel(config.AGENT_MODEL, provider=AnthropicProvider(api_key=config.anthropic_api_key(), base_url=config.ANTHROPIC_BASE_URL))
 
 
 @dataclass

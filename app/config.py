@@ -6,6 +6,10 @@ ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = ROOT / "app" / "data" / "shop.db"
 PROMPT_PATH = ROOT / "app" / "prompts" / "system.md"
 
+# Treat an empty ANTHROPIC_BASE_URL as unset. Some CI setups (e.g. Claude Code's GitHub Action) export it as "",
+# which the Anthropic SDK takes literally, so every request fails with "Request URL is missing an 'http://' protocol".
+ANTHROPIC_BASE_URL = os.environ.get("ANTHROPIC_BASE_URL") or "https://api.anthropic.com"
+
 # The model the *app agent* runs on (not the coding agent that optimises it).
 AGENT_MODEL = os.environ.get("AGENT_MODEL", "claude-haiku-4-5")
 
