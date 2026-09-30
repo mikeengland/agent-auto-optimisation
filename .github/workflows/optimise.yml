@@ -153,12 +153,17 @@ jobs:
           fi
           title=$(jq -r '.title // "Fix agent behaviour from feedback"' .optimise/outcome.json)
           git commit -m "$title" -m "Automated fix for feedback issue #$ISSUE."
+          # Push with GH_TOKEN (the PAT, when set): the Claude action rewrites origin to use the bot token, and
+          # pushes made with that token leave the PR's Evals run waiting for manual approval.
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
           git push --force origin "$BRANCH"
 
           draft_flag=""
           $all_green || draft_flag="--draft"
           if gh pr view "$BRANCH" --json number >/dev/null 2>&1; then
             gh pr edit "$BRANCH" --title "$title" --body-file .optimise/pr_full_body.md
+            # A re-run can change the verdict either way, so keep draft state in sync with the checks.
+            if $all_green; then gh pr ready "$BRANCH" || true; else gh pr ready "$BRANCH" --undo || true; fi
             pr_url=$(gh pr view "$BRANCH" --json url --jq .url)
           else
             pr_url=$(gh pr create --base main --head "$BRANCH" --title "$title" --body-file .optimise/pr_full_body.md $draft_flag)
